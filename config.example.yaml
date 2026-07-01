@@ -1,0 +1,12 @@
+# Copy to config.yaml and fill in.  (config.yaml is git-ignored — keep secrets out of git.)
+# Env vars DB_HOST / DB_PORT / DB_SERVICE_NAME / DB_USER / DB_PASSWORD / DB_SCHEMA override these.
+
+host:         your-oracle-host       # e.g. db.internal.company.com
+port:         1521
+service_name: ORCLPDB1               # Oracle service name (not SID)
+user:         APP_READONLY           # use a READ-ONLY user
+password:     changeme
+schema:       OPS                     # owner to introspect; blank = same as user
+
+# Optional: only introspect these tables. Blank/omitted = all tables in the schema.
+tables:       []                      # e.g. [PORTFOLIOS_POC, MANAGERS, SECURITIES, HOLDINGS]

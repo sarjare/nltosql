@@ -1,0 +1,19 @@
+# --- core prototype: runs with NONE of these installed (pure-python fallbacks) ---
+
+# Sharper tokenization + lemmatization (optional).
+#   after install:  python -m spacy download en_core_web_sm
+spacy>=3.7
+
+# Fast fuzzy matching / spell correction (optional; falls back to stdlib difflib)
+rapidfuzz>=3.6
+
+# Local semantic matching — runs offline, no API, data never leaves the machine.
+# First use downloads the ~90MB all-MiniLM-L6-v2 model once.
+sentence-transformers>=2.6
+
+# --- for connecting to the real Oracle DB (connection.py + backend.py /run) ---
+# Not needed for `python demo.py` or the /ask endpoint (those work on schema.json alone).
+oracledb>=2.0          # Oracle connectivity, thin mode (no Instant Client needed)
+pyyaml>=6.0            # optional; config.yaml also parses without it (fallback in db_config.py)
+
+# backend.py uses only the Python standard library (http.server) — no web framework needed.

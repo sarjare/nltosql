@@ -1,0 +1,60 @@
+{
+  "schema_name": "OPS",
+  "generated_note": "MOCK schema imitating SimCorp-style cryptic names with human-written comments. In the real system this file is produced by connection.py introspecting Oracle (ALL_TAB_COLUMNS / ALL_COL_COMMENTS / ALL_CONSTRAINTS).",
+  "tables": {
+    "PORTFOLIOS_POC": {
+      "comment": "Investment portfolios managed by the firm",
+      "columns": {
+        "PF_ID":       {"type": "NUMBER",       "comment": "Portfolio unique identifier", "pk": true},
+        "PF_NAME":     {"type": "VARCHAR2(120)", "comment": "Portfolio name / display label"},
+        "PF_CODE":     {"type": "VARCHAR2(20)",  "comment": "Short portfolio code / ticker"},
+        "MGR_ID":      {"type": "NUMBER",        "comment": "Manager identifier who owns this portfolio"},
+        "MKT_VAL":     {"type": "NUMBER",        "comment": "Total market value of the portfolio in base currency"},
+        "CCY":         {"type": "VARCHAR2(3)",   "comment": "Base currency code of the portfolio"},
+        "INCEPT_DT":   {"type": "DATE",          "comment": "Inception date when the portfolio was opened"},
+        "STATUS":      {"type": "VARCHAR2(10)",  "comment": "Portfolio status active or closed"}
+      },
+      "foreign_keys": [
+        {"column": "MGR_ID", "ref_table": "MANAGERS", "ref_column": "MGR_ID"}
+      ]
+    },
+    "MANAGERS": {
+      "comment": "Portfolio managers and their desks",
+      "columns": {
+        "MGR_ID":   {"type": "NUMBER",        "comment": "Manager unique identifier", "pk": true},
+        "MGR_NAME": {"type": "VARCHAR2(120)", "comment": "Full name of the portfolio manager"},
+        "DESK":     {"type": "VARCHAR2(60)",  "comment": "Trading desk or team the manager belongs to"},
+        "REGION":   {"type": "VARCHAR2(40)",  "comment": "Geographic region the manager covers"}
+      },
+      "foreign_keys": []
+    },
+    "SECURITIES": {
+      "comment": "Master list of tradable securities / instruments",
+      "columns": {
+        "SEC_ID":    {"type": "NUMBER",        "comment": "Security unique identifier", "pk": true},
+        "SEC_NAME":  {"type": "VARCHAR2(160)", "comment": "Security name / instrument description"},
+        "ISIN":      {"type": "VARCHAR2(12)",  "comment": "ISIN international securities identification number"},
+        "ASSET_CLS": {"type": "VARCHAR2(30)",  "comment": "Asset class such as equity bond cash derivative"},
+        "SEC_CCY":   {"type": "VARCHAR2(3)",   "comment": "Currency the security is denominated in"},
+        "PRICE":     {"type": "NUMBER",        "comment": "Latest market price of the security"}
+      },
+      "foreign_keys": []
+    },
+    "HOLDINGS": {
+      "comment": "Positions held by each portfolio in each security",
+      "columns": {
+        "HLD_ID":   {"type": "NUMBER", "comment": "Holding row unique identifier", "pk": true},
+        "PF_ID":    {"type": "NUMBER", "comment": "Portfolio identifier this holding belongs to"},
+        "SEC_ID":   {"type": "NUMBER", "comment": "Security identifier that is held"},
+        "QTY":      {"type": "NUMBER", "comment": "Quantity of units held"},
+        "MKT_VAL":  {"type": "NUMBER", "comment": "Market value of this holding in base currency"},
+        "WEIGHT":   {"type": "NUMBER", "comment": "Weight of the holding as a percentage of the portfolio"},
+        "AS_OF_DT": {"type": "DATE",   "comment": "As of date valuation date of the holding"}
+      },
+      "foreign_keys": [
+        {"column": "PF_ID",  "ref_table": "PORTFOLIOS_POC", "ref_column": "PF_ID"},
+        {"column": "SEC_ID", "ref_table": "SECURITIES",     "ref_column": "SEC_ID"}
+      ]
+    }
+  }
+}

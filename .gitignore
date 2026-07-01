@@ -1,0 +1,12 @@
+# credentials — never commit
+config.yaml
+*.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# generated (regenerate with connection.py; comment out if you want to commit it)
+# schema/schema.json
