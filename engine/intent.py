@@ -24,13 +24,33 @@ from . import lexicon
 from .matcher import Matcher
 
 
+class ConditionNode:
+    def walk(self) -> list['Condition']:
+        raise NotImplementedError
+
+
 @dataclass
-class Condition:
+class Condition(ConditionNode):
     column_phrase: str
     op: str
     value: str
     connector: str = "AND"     # how it joins to the PREVIOUS condition
     resolved: object = None    # MatchResult, filled by resolver
+
+    def walk(self) -> list['Condition']:
+        return [self]
+
+
+@dataclass
+class ConditionGroup(ConditionNode):
+    connector: str  # "AND" | "OR"
+    items: list[ConditionNode]
+
+    def walk(self) -> list['Condition']:
+        res = []
+        for item in self.items:
+            res.extend(item.walk())
+        return res
 
 
 @dataclass
@@ -47,7 +67,7 @@ class Intent:
     projection_phrases: list[str] = field(default_factory=list)
     aggregation: str | None = None          # COUNT/SUM/AVG/MAX/MIN
     aggregation_phrase: str | None = None    # what to aggregate
-    conditions: list[Condition] = field(default_factory=list)
+    conditions: ConditionNode | None = None
     group_phrases: list[str] = field(default_factory=list)
     having: tuple | None = None              # (op, number) on the aggregate
     order: OrderSpec | None = None
@@ -211,31 +231,93 @@ class IntentParser:
         filter_text = _strip_leading(
             filter_text, ["with", "where", "whose", "having", "for", "that have", "that has"])
 
-        # Handle BETWEEN before splitting on 'and' (between X and Y).
-        between = re.search(
-            r"(.+?)\bbetween\b\s+(.+?)\s+and\s+(.+)", filter_text)
-        if between:
-            col = between.group(1).strip()
-            intent.conditions.append(
-                Condition(column_phrase=col, op="BETWEEN",
-                          value=f"{between.group(2).strip()}|{between.group(3).strip()}"))
+        # Tokenize preserving parenthesis boundaries
+        tokens = self._tokenize_filter(filter_text)
+        if not tokens:
             return
 
-        # split into clauses on and/or, remembering the connector
-        parts = re.split(r"\s+(and|or)\s+", filter_text)
-        clauses = [(parts[0], "AND")]
-        for i in range(1, len(parts), 2):
-            connector = parts[i].upper()
-            clauses.append((parts[i + 1], connector))
+        try:
+            node, idx = self._parse_expression(tokens, 0)
+            intent.conditions = node
+        except Exception as e:
+            intent.notes.append(f"Failed to parse filter expression: {str(e)}")
 
-        for clause, connector in clauses:
-            cond = self._parse_clause(clause.strip(), connector)
-            if cond:
-                intent.conditions.append(cond)
+    def _tokenize_filter(self, text: str) -> list[str]:
+        # Pad parentheses with spaces, then split
+        padded = text.replace("(", " ( ").replace(")", " ) ")
+        return padded.split()
 
-    def _parse_clause(self, clause, connector):
+    def _parse_expression(self, tokens: list[str], start: int) -> tuple[ConditionNode, int]:
+        # expr -> term ( 'or' term )*
+        node, idx = self._parse_term(tokens, start)
+        while idx < len(tokens) and tokens[idx] == "or":
+            right_node, idx = self._parse_term(tokens, idx + 1)
+            if isinstance(node, ConditionGroup) and node.connector == "OR":
+                node.items.append(right_node)
+            else:
+                node = ConditionGroup(connector="OR", items=[node, right_node])
+        return node, idx
+
+    def _parse_term(self, tokens: list[str], start: int) -> tuple[ConditionNode, int]:
+        # term -> factor ( 'and' factor )*
+        node, idx = self._parse_factor(tokens, start)
+        while idx < len(tokens) and tokens[idx] == "and":
+            right_node, idx = self._parse_factor(tokens, idx + 1)
+            if isinstance(node, ConditionGroup) and node.connector == "AND":
+                node.items.append(right_node)
+            else:
+                node = ConditionGroup(connector="AND", items=[node, right_node])
+        return node, idx
+
+    def _parse_factor(self, tokens: list[str], start: int) -> tuple[ConditionNode, int]:
+        if start >= len(tokens):
+            raise ValueError("Unexpected end of filter expression")
+        if tokens[start] == "(":
+            node, idx = self._parse_expression(tokens, start + 1)
+            if idx >= len(tokens) or tokens[idx] != ")":
+                raise ValueError("Missing closing parenthesis")
+            return node, idx + 1
+        else:
+            return self._parse_clause_tokens(tokens, start)
+
+    def _parse_clause_tokens(self, tokens: list[str], start: int) -> tuple[ConditionNode, int]:
+        idx = start
+        has_between = False
+        between_and_consumed = False
+        clause_tokens = []
+        
+        while idx < len(tokens):
+            t = tokens[idx]
+            if t == "or" or t == ")":
+                break
+            if t == "between":
+                has_between = True
+            if t == "and":
+                if has_between and not between_and_consumed:
+                    between_and_consumed = True
+                else:
+                    break
+            clause_tokens.append(t)
+            idx += 1
+            
+        clause_str = " ".join(clause_tokens)
+        cond = self._parse_clause(clause_str)
+        if cond is None:
+            # Fallback/Unresolved clause wrapper
+            cond = Condition(column_phrase=clause_str, op="=", value="")
+        return cond, idx
+
+    def _parse_clause(self, clause):
         if not clause:
             return None
+            
+        # Support BETWEEN clause
+        between_match = re.search(r"(.+?)\bbetween\b\s+(.+?)\s+and\s+(.+)", clause)
+        if between_match:
+            col = between_match.group(1).strip()
+            val = f"{between_match.group(2).strip()}|{between_match.group(3).strip()}"
+            return Condition(column_phrase=col, op="BETWEEN", value=val)
+
         # find an explicit comparator phrase
         pos, ph = _find_first_phrase(clause, lexicon.COMPARATORS.keys())
         if pos > 0:                     # need a non-empty column phrase on the left
@@ -246,7 +328,7 @@ class IntentParser:
             # column of that noun, so steer the matcher toward it.
             if ph in ("named", "called") and "name" not in col:
                 col = f"{col} name".strip()
-            return Condition(column_phrase=col, op=op, value=value, connector=connector)
+            return Condition(column_phrase=col, op=op, value=value)
 
         # no comparator: assume equality. Greedily consume the longest leading
         # column phrase that resolves well; the remainder is the value.
@@ -256,16 +338,18 @@ class IntentParser:
             value = " ".join(tokens[take:])
             res = self.matcher.match(col_phrase)
             if res.best and res.best.score >= 0.45 and value:
-                return Condition(column_phrase=col_phrase, op="=",
-                                 value=value, connector=connector)
+                return Condition(column_phrase=col_phrase, op="=", value=value)
+                
+        # If still unmatched, return None so fallback can wrap it
         return None
 
     # -- resolve phrases to columns ---------------------------------------
     def _resolve(self, intent):
         for cp in [*intent.projection_phrases]:
             pass  # resolved lazily in sql_builder via matcher; kept here for clarity
-        for c in intent.conditions:
-            c.resolved = self.matcher.match(c.column_phrase)
+        if intent.conditions:
+            for c in intent.conditions.walk():
+                c.resolved = self.matcher.match(c.column_phrase)
         if intent.order:
             intent.order.resolved = self.matcher.match(intent.order.column_phrase)
         # apply top-N implied direction if order had no explicit column

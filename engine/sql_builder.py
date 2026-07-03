@@ -18,7 +18,7 @@ a clarification so the UI can ask the human (the "human in the loop" step).
 import re
 from dataclasses import dataclass, field
 
-from .intent import Intent
+from .intent import Intent, Condition, ConditionGroup
 from .matcher import Matcher
 from . import lexicon
 
@@ -93,12 +93,11 @@ class SQLBuilder:
             col = self.matcher.match(intent.aggregation_phrase).best
             if col:
                 return col.table
-        # last resort: the subject noun sitting inside a condition phrase, e.g.
-        # "portfolios named X" -> focus PORTFOLIOS_POC.
-        for c in intent.conditions:
-            t, tscore = self._match_table(c.column_phrase)
-            if t and tscore >= 0.5:
-                return t
+        if intent.conditions:
+            for c in intent.conditions.walk():
+                t, tscore = self._match_table(c.column_phrase)
+                if t and tscore >= 0.5:
+                    return t
         return None
 
     # -- main --------------------------------------------------------------
@@ -151,18 +150,11 @@ class SQLBuilder:
                     select_items.append(self._qual(col))
 
         # ---- conditions ----
-        where_parts = []
+        where_clause = ""
         params = {}
         pidx = 0
-        for cond in intent.conditions:
-            col = self._resolve_column(cond.column_phrase, res, focus_table=focus)
-            if not col:
-                continue
-            used_columns.append(col)
-            frag, params, pidx = self._render_condition(col, cond, params, pidx, res)
-            if frag:
-                prefix = "" if not where_parts else f" {cond.connector} "
-                where_parts.append(prefix + frag)
+        if intent.conditions:
+            where_clause, params, pidx = self._render_node(intent.conditions, focus, res, params, pidx, used_columns)
 
         # ---- group / having / order ----
         group_cols = []
@@ -205,8 +197,7 @@ class SQLBuilder:
 
         sql = f"SELECT {', '.join(select_items)}\nFROM {from_sql}"
         preview = sql
-        if where_parts:
-            where_clause = "".join(where_parts)
+        if where_clause:
             sql += f"\nWHERE {where_clause}"
             preview += f"\nWHERE {self._inline(where_clause, params)}"
         if group_cols:
@@ -280,6 +271,28 @@ class SQLBuilder:
                         f"{', '.join(joined)}; used CROSS JOIN — please verify.")
                 joined.add(t)
         return clause, warn
+
+    def _render_node(self, node, focus, res, params, pidx, used_columns):
+        if isinstance(node, Condition):
+            col = self._resolve_column(node.column_phrase, res, focus_table=focus)
+            if not col:
+                return "", params, pidx
+            used_columns.append(col)
+            frag, params, pidx = self._render_condition(col, node, params, pidx, res)
+            return frag, params, pidx
+        elif isinstance(node, ConditionGroup):
+            frags = []
+            for item in node.items:
+                frag, params, pidx = self._render_node(item, focus, res, params, pidx, used_columns)
+                if frag:
+                    frags.append(frag)
+            if not frags:
+                return "", params, pidx
+            if len(frags) == 1:
+                return frags[0], params, pidx
+            joined = f" {node.connector} ".join(frags)
+            return f"({joined})", params, pidx
+        return "", params, pidx
 
     def _render_condition(self, col, cond, params, pidx, res=None):
         colref = self._qual(col)
